@@ -44,4 +44,8 @@ Thumbs.db
 *.avi
 *.mov
 !example.*
-nul
+
+# Recordings folder (keep empty in repo)
+recordings/*.mp4
+recordings/*.avi
+recordings/*.mov
