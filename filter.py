@@ -53,7 +53,7 @@ print("--- Starting video stream. Press 'q' to quit ---")
 
 # Stats window dimensions (base size - will scale proportionally)
 BASE_STATS_WIDTH = 650
-BASE_STATS_HEIGHT = 550  # More compact layout
+BASE_STATS_HEIGHT = 620  # Increased for sensitivity slider
 
 # Current window size (updated each frame)
 current_window_width = BASE_STATS_WIDTH
@@ -82,6 +82,11 @@ color_input_text = "#FFFFFF"
 color_input_active = False
 color_input_cursor_visible = True
 color_input_cursor_timer = 0
+
+# Sensitivity state
+sensitivity = 50  # Default sensitivity (0-100)
+sensitivity_slider_active = False
+sensitivity_slider_pos = {}
 
 # Create Gaussian kernel once
 def create_gaussian_kernel(kernel_size=11, sigma=2.0, channels=1):
@@ -252,7 +257,7 @@ def get_window_size():
         current_window_height = BASE_STATS_HEIGHT
     return current_window_width, current_window_height
 
-def draw_stats_panel(fps, processing_time, gpu_allocated, gpu_reserved, recording_status, recording_time, input_text, input_active, cursor_visible, current_color):
+def draw_stats_panel(fps, processing_time, gpu_allocated, gpu_reserved, recording_status, recording_time, input_text, input_active, cursor_visible, current_color, sensitivity_value, slider_active):
     """Draw the stats/control panel with compact layout"""
     # Get actual window size
     width, height = get_window_size()
@@ -371,17 +376,75 @@ def draw_stats_panel(fps, processing_time, gpu_allocated, gpu_reserved, recordin
     # Helper text
     cv2.putText(stats, "Type hex (e.g. #FF0000) | Ctrl+V to paste | Enter to apply", (col1_x, textbox_y + textbox_height + int(18 * scale)), cv2.FONT_HERSHEY_SIMPLEX, 0.35 * scale, (120, 120, 120), 1)
 
+    # Sensitivity Slider Section
+    slider_y = textbox_y + textbox_height + int(50 * scale)
+    cv2.putText(stats, "SENSITIVITY", (col1_x, slider_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * scale, (100, 200, 100), 2)
+
+    # Slider track
+    slider_track_x = col1_x
+    slider_track_y = slider_y + int(25 * scale)
+    slider_track_width = int(600 * scale)
+    slider_track_height = int(12 * scale)
+
+    # Track background
+    cv2.rectangle(stats, (slider_track_x, slider_track_y),
+                  (slider_track_x + slider_track_width, slider_track_y + slider_track_height),
+                  (40, 40, 60), -1)
+    cv2.rectangle(stats, (slider_track_x, slider_track_y),
+                  (slider_track_x + slider_track_width, slider_track_y + slider_track_height),
+                  (100, 100, 150), 2)
+
+    # Slider handle position based on sensitivity value
+    handle_x = slider_track_x + int((sensitivity_value / 100) * slider_track_width)
+    handle_width = int(20 * scale)
+    handle_height = int(30 * scale)
+
+    # Draw filled portion of track
+    filled_width = handle_x - slider_track_x
+    if filled_width > 0:
+        cv2.rectangle(stats, (slider_track_x, slider_track_y),
+                      (slider_track_x + filled_width, slider_track_y + slider_track_height),
+                      (0, 150, 255), -1)
+
+    # Draw handle
+    handle_color = (0, 200, 255) if slider_active else (0, 150, 200)
+    cv2.rectangle(stats, (handle_x - handle_width // 2, slider_track_y - int(8 * scale)),
+                  (handle_x + handle_width // 2, slider_track_y + slider_track_height + int(8 * scale)),
+                  handle_color, -1)
+    cv2.rectangle(stats, (handle_x - handle_width // 2, slider_track_y - int(8 * scale)),
+                  (handle_x + handle_width // 2, slider_track_y + slider_track_height + int(8 * scale)),
+                  (255, 255, 255), 2)
+
+    # Sensitivity value display
+    cv2.putText(stats, f"{sensitivity_value}%",
+                (slider_track_x + slider_track_width + int(15 * scale), slider_track_y + int(12 * scale)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5 * scale, (200, 200, 200), 2)
+
+    # Store slider position for click detection
+    current_slider_pos = {
+        'x': slider_track_x,
+        'y': slider_track_y - int(10 * scale),
+        'w': slider_track_width,
+        'h': slider_track_height + int(20 * scale),
+        'track_x': slider_track_x,
+        'track_width': slider_track_width
+    }
+
+    # Helper text for slider
+    cv2.putText(stats, "Lower = More edges | Higher = Fewer edges", (col1_x, slider_track_y + slider_track_height + int(25 * scale)), cv2.FONT_HERSHEY_SIMPLEX, 0.35 * scale, (120, 120, 120), 1)
+
     # Footer
     footer_height = int(38 * scale)
     cv2.rectangle(stats, (0, height - footer_height), (width, height), (30, 30, 50), -1)
-    cv2.putText(stats, "Press 'q' to quit | Click textbox to type | ESC to cancel",
+    cv2.putText(stats, "Press 'q' to quit | Click textbox to type | Drag slider to adjust | ESC to cancel",
                 (int(25 * scale), height - int(14 * scale)), cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (150, 150, 150), 1)
 
-    return stats, current_button_pos, current_textbox_pos
+    return stats, current_button_pos, current_textbox_pos, current_slider_pos
 
 # Global button and textbox positions (updated each frame)
 current_button_pos = {}
 current_textbox_pos = {}
+current_slider_pos = {}
 
 def is_button_clicked(x, y):
     """Check if coordinates are within the button area"""
@@ -397,11 +460,33 @@ def is_textbox_clicked(x, y):
     return current_textbox_pos['x'] <= x <= current_textbox_pos['x'] + current_textbox_pos['w'] and \
            current_textbox_pos['y'] <= y <= current_textbox_pos['y'] + current_textbox_pos['h']
 
+def is_slider_clicked(x, y):
+    """Check if coordinates are within the slider area"""
+    if not current_slider_pos:
+        return False
+    return current_slider_pos['x'] <= x <= current_slider_pos['x'] + current_slider_pos['w'] and \
+           current_slider_pos['y'] <= y <= current_slider_pos['y'] + current_slider_pos['h']
+
+def update_sensitivity_from_position(x):
+    """Update sensitivity based on mouse position"""
+    global sensitivity
+    if not current_slider_pos:
+        return
+
+    # Calculate position as percentage
+    rel_x = x - current_slider_pos['track_x']
+    percentage = (rel_x / current_slider_pos['track_width']) * 100
+
+    # Clamp to 0-100 range
+    sensitivity = max(0, min(100, int(percentage)))
+    print(f"--- Sensitivity updated to: {sensitivity}% ---")
+
 # Mouse callback for button clicks and textbox
 def mouse_callback(event, x, y, flags, param):
     global is_recording, video_writer, recording_start_time, recording_frame_count
     global color_input_active, color_input_text, current_line_color
     global current_button_pos, current_textbox_pos
+    global sensitivity, sensitivity_slider_active
 
     if event == cv2.EVENT_LBUTTONDOWN:
         if is_button_clicked(x, y):
@@ -432,8 +517,18 @@ def mouse_callback(event, x, y, flags, param):
                 print(f"--- Average FPS: {recording_frame_count / recording_time:.1f} ---")
         elif is_textbox_clicked(x, y):
             color_input_active = True
+            sensitivity_slider_active = False
+        elif is_slider_clicked(x, y):
+            sensitivity_slider_active = True
+            color_input_active = False
+            update_sensitivity_from_position(x)
         else:
             color_input_active = False
+            sensitivity_slider_active = False
+    elif event == cv2.EVENT_MOUSEMOVE and (flags & cv2.EVENT_FLAG_LBUTTON):
+        # Handle slider dragging
+        if sensitivity_slider_active:
+            update_sensitivity_from_position(x)
 
 # Pre-compute scanlines pattern (will be created on first frame)
 scanlines_pattern = None
@@ -520,7 +615,12 @@ while cap.isOpened():
         mask_blurred = gaussian_blur_gpu(mask, kernel_size=11)
 
         # THE OSCILLOSCOPE (Edges of you)
-        edges = canny_edge_detection_gpu(frame, 20, 60)
+        # Calculate Canny thresholds based on sensitivity (0-100)
+        # Lower sensitivity = lower thresholds = more edges detected
+        # Higher sensitivity = higher thresholds = fewer edges detected
+        threshold1 = int(10 + (sensitivity / 100) * 50)  # Range: 10-60
+        threshold2 = int(30 + (sensitivity / 100) * 90)  # Range: 30-120
+        edges = canny_edge_detection_gpu(frame, threshold1, threshold2)
 
         person_lines = np.zeros_like(frame)
         person_lines[edges > 0] = line_color_bgr
@@ -580,7 +680,7 @@ while cap.isOpened():
             color_input_cursor_timer = 0
 
         # Draw stats panel
-        stats_panel, btn_pos, txt_pos = draw_stats_panel(
+        stats_panel, btn_pos, txt_pos, slider_pos = draw_stats_panel(
             display_fps,
             np.mean(processing_times) if processing_times else 0,
             gpu_allocated,
@@ -590,12 +690,15 @@ while cap.isOpened():
             color_input_text,
             color_input_active,
             color_input_cursor_visible,
-            line_color_bgr
+            line_color_bgr,
+            sensitivity,
+            sensitivity_slider_active
         )
 
         # Update global positions for click detection
         current_button_pos = btn_pos
         current_textbox_pos = txt_pos
+        current_slider_pos = slider_pos
 
         # Display windows
         cv2.imshow('Music Video Filter', final_view)
